@@ -22,12 +22,14 @@
 
 import collections
 import inspect
+import json
 import logging
+import os
 import random
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
-from datasets import DatasetDict
+from datasets import DatasetDict, Dataset
 from huggingface_hub import TextGenerationInputGrammarType
 from multiprocess import Pool
 from pytablewriter import MarkdownTableWriter
@@ -62,6 +64,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+def read_local_dataset(dataset_path: str):
+    data_dict = collections.defaultdict(list)
+    with open(dataset_path, 'r') as f:
+        for l in f:
+            line = json.loads(l)
+            if "problem" in line:
+                data_dict["problem"].append(line["problem"])
+            if "solution" in line:
+                data_dict["solution"].append(line["solution"])
+            if "choices" in line:
+                data_dict["choices"].append(line["choices"])
+            if "gold_index" in line:
+                data_dict["gold_index"].append(line["gold_index"])
+    dataset = Dataset.from_dict(data_dict)
+    return DatasetDict({"test": dataset})
 
 @dataclass
 class LightevalTaskConfig:
@@ -273,13 +290,18 @@ class LightevalTask:
             list[Doc]: List of documents.
         """
         if self.dataset is None:
-            self.dataset = download_dataset_worker(
-                self.dataset_path,
-                self.dataset_config_name,
-                self.trust_dataset,
-                self.dataset_filter,
-                self.dataset_revision,
-            )
+            if not os.path.exists(self.dataset_path):
+                self.dataset = download_dataset_worker(
+                    self.dataset_path,
+                    self.dataset_config_name,
+                    self.trust_dataset,
+                    self.dataset_filter,
+                    self.dataset_revision,
+                )
+            else:
+                self.dataset = read_local_dataset(
+                    self.dataset_path
+                )
         splits = as_list(splits)
 
         docs = []
