@@ -22,12 +22,14 @@
 
 import collections
 import inspect
+import os
 import logging
+import json
 import random
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
-from datasets import DatasetDict
+from datasets import DatasetDict, Dataset
 from huggingface_hub import TextGenerationInputGrammarType
 from multiprocess import Pool
 from pytablewriter import MarkdownTableWriter
@@ -62,6 +64,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+def read_local_dataset(dataset_path: str, *args):
+    data_dict = collections.defaultdict(list)
+    with open(dataset_path, 'r') as f:
+        for l in f:
+            line = json.loads(l)
+            if "problem" in line:
+                data_dict["problem"].append(line["problem"])
+            if "solution" in line:
+                data_dict["solution"].append(line["solution"])
+            if "choices" in line:
+                data_dict["choices"].append(line["choices"])
+            if "gold_index" in line:
+                data_dict["gold_index"].append(line["gold_index"])
+    dataset = Dataset.from_dict(data_dict)
+    return DatasetDict({"test": dataset})
 
 @dataclass
 class LightevalTaskConfig:
@@ -272,8 +289,9 @@ class LightevalTask:
         Returns:
             list[Doc]: List of documents.
         """
+        data_load_fn = read_local_dataset if os.path.exists(self.dataset_path) else download_dataset_worker
         if self.dataset is None:
-            self.dataset = download_dataset_worker(
+            self.dataset = data_load_fn(
                 self.dataset_path,
                 self.dataset_config_name,
                 self.trust_dataset,
@@ -541,10 +559,10 @@ class LightevalTask:
         Returns:
             None
         """
-
+        data_load_fn = read_local_dataset if os.path.exists(tasks[0].dataset_path) else download_dataset_worker
         if dataset_loading_processes <= 1:
             datasets = [
-                download_dataset_worker(
+                data_load_fn(
                     task.dataset_path,
                     task.dataset_config_name,
                     task.trust_dataset,
@@ -556,7 +574,7 @@ class LightevalTask:
         else:
             with Pool(processes=dataset_loading_processes) as pool:
                 datasets = pool.starmap(
-                    download_dataset_worker,
+                    data_load_fn,
                     [
                         (
                             task.dataset_path,
